@@ -1,31 +1,28 @@
-.PHONY: install test lint format run-sim record train-act train-smolvla eval clean
+SHELL := /bin/bash
+WS := ros2_ws
 
-install:
-	pip install -e ".[dev]"
+.PHONY: help build test lint clean sim real setup
+
+help:
+	@echo "make build   # colcon build"
+	@echo "make test    # 跑核心库单元测试（不需要 ROS2）"
+	@echo "make sim     # 启动仿真节点组"
+	@echo "make real    # 启动真机节点组"
+
+build:
+	cd $(WS) && colcon build --symlink-install
 
 test:
-	pytest -q
+	cd $(WS)/src/voice_arm_core && python -m pytest -q
 
 lint:
-	ruff check src tests
+	ruff check $(WS)/src
 
-format:
-	ruff format src tests
+sim: build
+	source $(WS)/install/setup.bash && ros2 launch voice_arm_bringup sim.launch.py
 
-run-sim:
-	python -m voice_arm.app.orchestrator --config configs/sim.yaml
-
-record:
-	bash scripts/record_data.sh
-
-train-act:
-	bash scripts/train_act.sh
-
-train-smolvla:
-	bash scripts/train_smolvla.sh
-
-eval:
-	bash scripts/eval.sh
+real: build
+	source $(WS)/install/setup.bash && ros2 launch voice_arm_bringup real.launch.py
 
 clean:
-	rm -rf outputs/ __pycache__/ .pytest_cache/ .ruff_cache/
+	rm -rf $(WS)/build $(WS)/install $(WS)/log

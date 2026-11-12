@@ -9,6 +9,11 @@ dist/
 venv/
 .env
 
+# colcon
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+
 # 测试与缓存
 .pytest_cache/
 .ruff_cache/

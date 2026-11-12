@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>voice_arm_core</name>
+  <version>0.1.0</version>
+  <description>纯 Python 核心库：VLM、策略、状态机、硬件抽象（不依赖 ROS2）</description>
+  <maintainer email="hxm@example.com">何佳俊</maintainer>
+  <license>MIT</license>
+
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

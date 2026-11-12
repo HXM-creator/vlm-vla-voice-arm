@@ -1,0 +1,25 @@
+audio_node:
+  ros__parameters:
+    wakeword: openWakeWord
+    asr: sensevoice-small
+    tts: edge-tts
+
+vlm_node:
+  ros__parameters:
+    model: deepseek-flash
+    base_url: https://api.deepseek.com
+    confidence_threshold: 0.6
+
+policy_node:
+  ros__parameters:
+    checkpoint: ""
+    action_chunk: 16
+    dof: 6
+
+robot_node:
+  ros__parameters:
+    backend: sim
+    dof: 6
+    control_hz: 30
+    port: /dev/ttyACM0
+    leader_port: /dev/ttyACM1

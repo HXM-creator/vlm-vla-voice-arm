@@ -1,0 +1,4 @@
+# 仿真配置：继承 default，仅覆盖差异项
+inherit: default.yaml
+robot:
+  backend: sim

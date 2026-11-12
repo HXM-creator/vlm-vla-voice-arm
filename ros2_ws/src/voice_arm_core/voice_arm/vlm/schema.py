@@ -1,4 +1,10 @@
-"""VLM 输出指令的结构定义与校验。"""
+"""VLM 输出指令的结构定义与校验。
+
+字段去向：
+- 进入 VLA 输入：target.color / target.shape（拼成 "pick up the green cube"）
+- 仅用于控制流：action / confidence / need_clarify / target_present
+- 仅用于语音播报与日志：reply / position_hint / target.description
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -17,6 +23,7 @@ COLORS = {"red", "green", "blue", "any"}
 SHAPES = {"cube", "cylinder", "any"}
 ORDINALS = {"leftmost", "rightmost", "middle", "any"}
 REGIONS = {"left", "right", "center", "any"}
+POSITION_HINTS = {"left", "center", "right", "unknown"}
 
 
 @dataclass
@@ -42,6 +49,18 @@ class Command:
     confidence: float = 0.0
     need_clarify: bool = False
     clarify_question: str | None = None
+    target_present: bool = True
+    position_hint: str = "unknown"
+
+    def to_vla_instruction(self) -> str:
+        """拼出进入 VLA 的固定模板。position_hint 与 reply 不参与。"""
+        if self.action is Action.STOP:
+            return "stop"
+        if self.action is Action.PLACE:
+            return f"place the object in the {self.destination.region} area"
+        color = "" if self.target.color == "any" else self.target.color + " "
+        shape = "object" if self.target.shape == "any" else self.target.shape
+        return f"pick up the {color}{shape}"
 
 
 class SchemaError(ValueError):
@@ -83,6 +102,10 @@ def validate(raw: dict[str, Any]) -> Command:
     if not 0.0 <= conf <= 1.0:
         raise SchemaError("confidence must be within [0, 1]")
 
+    hint = raw.get("position_hint", "unknown")
+    if hint not in POSITION_HINTS:
+        raise SchemaError(f"invalid position_hint: {hint}")
+
     return Command(
         action=action,
         target=target,
@@ -91,4 +114,6 @@ def validate(raw: dict[str, Any]) -> Command:
         confidence=conf,
         need_clarify=bool(raw.get("need_clarify", False)),
         clarify_question=raw.get("clarify_question"),
+        target_present=bool(raw.get("target_present", True)),
+        position_hint=hint,
     )

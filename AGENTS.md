@@ -75,3 +75,16 @@ cd ros2_ws && colcon build && ros2 launch voice_arm_bringup sim.launch.py
 - 不要改冻结契约而不通知
 - 不要把数据、模型权重、API Key 提交进仓库
 - 不要在节点里写业务逻辑
+
+
+## 会话记录（每次改动后必须做）
+
+每次有实质改动，在 `docs/journal/` 新建 `YYYY-MM-DD.md`（模板见 `_template.md`），记录：
+
+1. 做了什么
+2. 关键决策（为什么这么选）
+3. 遇到的问题与解法
+4. 当前状态
+5. 下一步
+
+这一步不是可选项：换机器接续开发时，`docs/journal/` 是唯一能复原上下文的地方。

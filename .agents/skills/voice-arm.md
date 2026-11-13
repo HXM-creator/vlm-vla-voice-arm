@@ -50,3 +50,10 @@ bash scripts/setup_env.sh --check
 - 不改 `robot/interface.py`、`msg/*.msg`、相机名与关节顺序
 - 不在节点里写业务逻辑
 - 不提交数据、权重、API Key
+
+
+## 会话记录
+
+有实质改动时，在 `docs/journal/YYYY-MM-DD.md` 写一篇记录（模板 `_template.md`）：
+做了什么、关键决策、遇到的问题与解法、当前状态、下一步。
+这是换机器接续的唯一上下文来源。

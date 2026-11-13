@@ -2,45 +2,30 @@
 
 # vlm-vla-voice-arm
 
-**VLM 大脑 + VLA 小脑的中文语音控制机械臂系统**
+**说一句中文，机械臂自己去抓**
 
-使用者用日常口语下达抓放指令，机械臂完成目标选择、抓取与放置，并以语音回复结果。
+VLM 负责「听懂并选目标」，VLA 负责「看图并出动作」。<br>
+Ubuntu 22.04 · ROS 2 Humble · MuJoCo · LeRobot
 
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
 ![ROS2](https://img.shields.io/badge/ROS2-Humble-22314E)
 ![Ubuntu](https://img.shields.io/badge/Ubuntu-22.04-E95420)
+![Tests](https://img.shields.io/badge/tests-37%20passed-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-12%20passed-brightgreen)
+
+[快速开始](#快速开始) · [系统架构](#系统架构) · [仓库结构](#仓库结构) · [进度](#当前进度) · [文档](#文档地图) · [交接](#换机器接续)
 
 </div>
 
 ---
 
----
+## 这是什么
 
-## 快速开始（3 条命令）
+一套桌面机械臂的语音控制系统。使用者说「把绿色的方块放到右边」，
+系统完成语音识别、意图理解、目标选择、动作生成与语音回复，全程不需要专用命令词。
 
-```bash
-git clone git@github.com:HXM-creator/vlm-vla-voice-arm.git && cd vlm-vla-voice-arm
-bash scripts/setup_env.sh --check          # 先看缺什么
-bash scripts/setup_env.sh                  # 装核心依赖 + 仿真
-make test                                  # 37 个测试
-```
-
-装训练与音频依赖：
-
-```bash
-bash scripts/setup_env.sh --train --audio
-```
-
-环境有问题时：
-
-```bash
-python scripts/doctor.py     # 逐项列出缺什么、怎么装
-```
-
-**新机器迁移**：仓库自带 SO-101 MuJoCo 模型（16 MB）与全部文档，
-clone 下来按 `docs/setup.md` 走一遍即可；给 AI 助手的说明见 `AGENTS.md`。
+与常见方案的区别在于**边界清晰**：VLM 只判断「抓哪个」，位置由 VLA 从图像中学，
+不经 VLM 中转坐标。这样语言与动作两层可以独立迭代、独立评估。
 
 ---
 
@@ -48,96 +33,67 @@ clone 下来按 `docs/setup.md` 走一遍即可；给 AI 助手的说明见 `AGE
 
 ![系统架构](assets/figures/architecture.png)
 
-系统分为两层，两层之间以结构化指令为唯一接口：
-
 | 层次 | 角色 | 输入 | 输出 |
 |:---|:---|:---|:---|
-| **VLM** | 大脑 | 指令文本 + 桌面图像 | 结构化动作指令（抓哪个、放哪里） |
-| **VLA** | 小脑 | 图像 + 语言条件 | 关节动作块（16 步 × 6 关节） |
+| **VLM** | 大脑 | 中文指令 + 桌面图像 | 固定模板的英文指令 + 目标是否存在 |
+| **VLA** | 小脑 | 图像 + 英文指令 | 关节动作块（16 步 × 6 关节） |
 
-**两条硬约束：**
+**三条不变量：**
 
-- VLM 不接触关节空间，只做语义决策
-- VLA 不解析自然语言，语言条件在训练时注入
-
-任意一层的模型更换都不影响另一层。
-
----
-
-## ROS2 节点拓扑
+- VLM 不输出坐标，只做语义决策
+- 方位描述（`position_hint`）与语音回复不进入 VLA 输入
+- 真机与仿真共用同一套上层代码，只换 `robot/real.py`
 
 ![ROS2 节点拓扑](assets/figures/ros2_graph.png)
-
-| # | 话题 | 类型 | 方向 |
-|:---:|:---|:---|:---|
-| ① | `/voice/instruction` | `std_msgs/String` | audio → vlm |
-| ② | `/task/command` | `voice_arm_interfaces/TaskCommand` | vlm → policy, orchestrator |
-| ③ | `/robot/action_chunk` | `voice_arm_interfaces/ActionChunk` | policy → robot |
-| ④ | `/robot/status` | `voice_arm_interfaces/RobotStatus` | robot → orchestrator |
-| ⑤ | `/camera/front/image_raw` | `sensor_msgs/Image` | robot → vlm |
-| — | `/robot/joint_states` | `sensor_msgs/JointState` | robot → 外部监控 |
-| — | `/voice/reply` | `std_msgs/String` | orchestrator → audio |
-
----
-
-## 包结构
-
-![包结构](assets/figures/packages.png)
-
-```
-ros2_ws/src/
-├── voice_arm_interfaces/      自定义消息
-│   └── msg/{TaskCommand,ActionChunk,RobotStatus}.msg
-├── voice_arm_core/            纯 Python 核心库（无 ROS2 依赖）
-│   ├── voice_arm/
-│   │   ├── audio/             唤醒词 · ASR · TTS
-│   │   ├── vlm/               schema · prompts · client
-│   │   ├── policy/            runner · dataset · train
-│   │   ├── robot/             interface · sim · real
-│   │   ├── app/               state_machine · orchestrator
-│   │   └── utils/             config · logging
-│   └── tests/                 12 个单元测试
-└── voice_arm_bringup/         5 个 rclpy 节点 + launch
-    ├── voice_arm_bringup/{audio,vlm,policy,robot,orchestrator}_node.py
-    ├── launch/{sim,real}.launch.py
-    └── config/params.yaml
-```
-
-**设计原则：核心逻辑不进节点。**
-
-节点只做三件事：收到消息 → 转成核心对象 → 调用核心库 → 转回消息发布。这样单元测试不需要 ROS2 环境，单独调试某个模块也不用启动整套系统。
 
 ---
 
 ## 快速开始
 
 ```bash
-# 0. 仿真模型（可选，不装则用合成图像）
-bash scripts/download_sim_model.sh
+git clone git@github.com:HXM-creator/vlm-vla-voice-arm.git && cd vlm-vla-voice-arm
 
-# 1. 依赖（Ubuntu 22.04）
-sudo apt install ros-humble-desktop python3-colcon-common-extensions
-pip install -e "ros2_ws/src/voice_arm_core[dev]"
-
-# 2. 构建
-make build
-
-# 3. 单元测试（不需要 source ROS2）
-make test
-
-# 4. 仿真启动
-make sim
-
-# 5. 另开终端检查
-ros2 node list
-ros2 topic hz /robot/status
+bash scripts/setup_env.sh --check    # 先看缺什么
+bash scripts/setup_env.sh            # 装核心依赖 + 仿真
+make test                            # 37 个测试
 ```
 
-真机启动：
+需要训练与语音：
 
 ```bash
-make real
+bash scripts/setup_env.sh --train --audio
 ```
+
+环境排查：
+
+```bash
+python scripts/doctor.py     # 逐项列出缺什么、怎么装
+```
+
+> 仓库自带 SO-101 MuJoCo/URDF 模型（16 MB），clone 下来即可用，无需额外下载。
+
+---
+
+## 仓库结构
+
+```
+ros2_ws/src/
+├── voice_arm_interfaces/      TaskCommand · ActionChunk · RobotStatus
+├── voice_arm_core/            纯 Python 核心库（可单测，不依赖 ROS2）
+│   └── voice_arm/
+│       ├── robot/             interface / sim（MuJoCo）/ real（待实现）
+│       ├── vlm/               schema / prompts / client
+│       ├── policy/            runner / dataset / train
+│       ├── app/               state_machine / orchestrator
+│       ├── audio/             wakeword / asr / tts
+│       └── sim/assets/        SO-101 模型（16 MB）
+└── voice_arm_bringup/         5 个 rclpy 节点 + sim/real 两套 launch
+
+scripts/     setup_env · doctor · record_sim · replay_sim · check_dataset · check_language_conditioning
+docs/        decisions · architecture · interface · schema · experiments · setup · handoff · journal/
+```
+
+![包结构](assets/figures/packages.png)
 
 ---
 
@@ -146,30 +102,51 @@ make real
 | 模块 | 状态 | 说明 |
 |:---|:---:|:---|
 | ROS2 骨架与话题 | ✅ | 三个包、五个节点、两套 launch |
-| 核心库接口 | ✅ | 18 个测试通过 |
-| 仿真后端 | ✅ | 支持 MuJoCo，未装模型时回退合成图像 |
-| 双相机与单位转换 | ✅ | 接口固定两路；度→弧度带越界断言 |
-| VLM 接入 | ✅ | 15 s 超时 + 重试；`python -m voice_arm.vlm.client` 可单独测 |
-| 策略推理 | ✅ | 接 lerobot；未加载时零动作回退 |
-| 语音链路 | ✅ | 唤醒 / ASR / TTS 实现，延迟导入依赖 |
-| 数据采集 | ✅ | `scripts/record_sim.py`，有 lerobot 写 v3，否则回退 npz |
+| 核心库 | ✅ | 37 个测试通过 |
+| 仿真后端 | ✅ | 支持 MuJoCo，缺模型时回退合成图像 |
+| 数据采集 | ✅ | `record_sim.py`，有 lerobot 写 v3，否则回退 npz |
 | 回放与验证 | ✅ | `replay_sim.py`、`check_language_conditioning.py` |
-| 端到端演示 | ⏳ | 需 Ubuntu + 模型 + API Key 实跑 |
-| 真机驱动 | ⏳ | 队友实现 `real.py` 与 `robot_node` 回调 |
+| VLM 接入 | ✅ | 15 s 超时 + 重试，可单命令试用 |
+| 语音链路 | ✅ | 唤醒 / ASR / TTS，延迟导入依赖 |
+| 端到端演示 | ⏳ | 需 Ubuntu + checkpoint + API Key 实跑 |
+| 真机驱动 | ⏳ | 队友实现 `real.py` 的 7 个方法 |
 
-**硬件选型尚未确定。** 接口契约已固定（见 [docs/interface.md](docs/interface.md)），硬件侧按契约实现即可，上层代码不需要改。
+**代码与单测就绪，端到端尚未实跑。** 每个阶段怎么验证见 [docs/experiments.md](docs/experiments.md)，
+其中明确区分了「仿真能验证」与「只能真机验证」的项目。
 
 ---
 
-## 文档
+## 文档地图
 
-| 文档 | 内容 |
+| 文档 | 什么时候看 |
 |:---|:---|
-| [架构说明](docs/architecture.md) | 两层结构、数据流、真机/仿真切换 |
-| [接口契约](docs/interface.md) | 7 个方法、频率、单位、验收标准 |
-| [指令 Schema](docs/schema.md) | VLM 输出结构、字段约束、降级规则 |
-| [环境搭建](docs/setup.md) | Ubuntu 22.04 + ROS2 Humble 完整步骤 |
-| [验证流程](docs/experiments.md) | 五阶段验证、仿真边界、当前状态 |
+| [决策记录](docs/decisions.md) | 想知道为什么这么选、有哪些方案被否掉 |
+| [架构说明](docs/architecture.md) | 改代码前先确认职责边界与数据流 |
+| [接口契约](docs/interface.md) | 硬件侧实现 `real.py` 时逐条对照 |
+| [指令 Schema](docs/schema.md) | 改 VLM 输出字段时看约束与降级规则 |
+| [验证流程](docs/experiments.md) | 每个阶段的命令、通过标准、失败排查 |
+| [环境搭建](docs/setup.md) | 新机器从零装 ROS2 与依赖 |
+| [换机器接续](docs/handoff.md) | 从 Windows 换到 Ubuntu 时按此走 |
+| [会话记录](docs/journal/) | 上次做到哪、遗留什么问题 |
+
+给 AI 助手的说明见 [AGENTS.md](AGENTS.md) 与 [.agents/skills/voice-arm.md](.agents/skills/voice-arm.md)。
+
+---
+
+## 开发约定
+
+下面三项**一旦确定不能单方面修改**，改动会导致已采集数据失效：
+
+1. `voice_arm/robot/interface.py` 的 7 个方法签名与单位（弧度）
+2. `voice_arm_interfaces/msg/*.msg` 的字段
+3. 数据字段：相机名 `front` / `wrist`、关节顺序
+
+分支与提交规范见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
+```bash
+git checkout -b feat/your-feature      # main 受保护，不直接推
+make test                              # 提交前必须全绿
+```
 
 ---
 
@@ -182,6 +159,6 @@ make real
 
 ---
 
-## License
+## 许可
 
-[MIT](LICENSE)
+[MIT](LICENSE)。仿真模型来源见 [assets/README.md](ros2_ws/src/voice_arm_core/voice_arm/sim/assets/README.md)。

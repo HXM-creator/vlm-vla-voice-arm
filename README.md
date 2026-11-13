@@ -121,11 +121,13 @@ make real
 | 核心库接口 | ✅ | 18 个测试通过 |
 | 仿真后端 | ✅ | 支持 MuJoCo，未装模型时回退合成图像 |
 | 双相机与单位转换 | ✅ | 接口固定两路；度→弧度带越界断言 |
-| VLM 接入 | ⏳ | 调 `voice_arm_core.vlm.client.VLMClient` |
-| 策略推理 | ⏳ | 调 `voice_arm_core.policy.runner.PolicyRunner` |
+| VLM 接入 | ✅ | 15 s 超时 + 重试；`python -m voice_arm.vlm.client` 可单独测 |
+| 策略推理 | ✅ | 接 lerobot；未加载时零动作回退 |
+| 语音链路 | ✅ | 唤醒 / ASR / TTS 实现，延迟导入依赖 |
+| 数据采集 | ✅ | `scripts/record_sim.py`，有 lerobot 写 v3，否则回退 npz |
+| 回放与验证 | ✅ | `replay_sim.py`、`check_language_conditioning.py` |
+| 端到端演示 | ⏳ | 需 Ubuntu + 模型 + API Key 实跑 |
 | 真机驱动 | ⏳ | 队友实现 `real.py` 与 `robot_node` 回调 |
-| 语音链路 | ⏳ | openWakeWord + FunASR + edge-tts |
-| 数据采集 | ⏳ | 仿真采集脚本待写 |
 
 **硬件选型尚未确定。** 接口契约已固定（见 [docs/interface.md](docs/interface.md)），硬件侧按契约实现即可，上层代码不需要改。
 
@@ -139,6 +141,7 @@ make real
 | [接口契约](docs/interface.md) | 7 个方法、频率、单位、验收标准 |
 | [指令 Schema](docs/schema.md) | VLM 输出结构、字段约束、降级规则 |
 | [环境搭建](docs/setup.md) | Ubuntu 22.04 + ROS2 Humble 完整步骤 |
+| [验证流程](docs/experiments.md) | 五阶段验证、仿真边界、当前状态 |
 
 ---
 

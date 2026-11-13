@@ -84,8 +84,9 @@ export DEEPSEEK_API_KEY="sk-..."
 
 ```bash
 pip install "mujoco>=3.0"
-bash scripts/download_sim_model.sh
 ```
+
+模型已随仓库提供，位于 `ros2_ws/src/voice_arm_core/voice_arm/sim/assets/`，无需下载。
 
 模型下载后，把 `params.yaml` 里的 `sim_xml` 指向场景文件：
 

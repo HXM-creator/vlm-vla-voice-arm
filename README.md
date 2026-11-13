@@ -16,6 +16,34 @@
 
 ---
 
+---
+
+## 快速开始（3 条命令）
+
+```bash
+git clone git@github.com:HXM-creator/vlm-vla-voice-arm.git && cd vlm-vla-voice-arm
+bash scripts/setup_env.sh --check          # 先看缺什么
+bash scripts/setup_env.sh                  # 装核心依赖 + 仿真
+make test                                  # 37 个测试
+```
+
+装训练与音频依赖：
+
+```bash
+bash scripts/setup_env.sh --train --audio
+```
+
+环境有问题时：
+
+```bash
+python scripts/doctor.py     # 逐项列出缺什么、怎么装
+```
+
+**新机器迁移**：仓库自带 SO-101 MuJoCo 模型（16 MB）与全部文档，
+clone 下来按 `docs/setup.md` 走一遍即可；给 AI 助手的说明见 `AGENTS.md`。
+
+---
+
 ## 系统架构
 
 ![系统架构](assets/figures/architecture.png)

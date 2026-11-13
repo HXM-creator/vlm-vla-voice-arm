@@ -76,3 +76,41 @@ export DEEPSEEK_API_KEY="sk-..."
 ```
 
 不要写进代码或提交到仓库。
+
+
+## 7. 仿真环境（可选）
+
+仿真不依赖真机，用来在硬件到货前跑通链路。
+
+```bash
+pip install "mujoco>=3.0"
+bash scripts/download_sim_model.sh
+```
+
+模型下载后，把 `params.yaml` 里的 `sim_xml` 指向场景文件：
+
+```yaml
+robot_node:
+  ros__parameters:
+    sim_xml: ros2_ws/src/voice_arm_core/voice_arm/sim/assets/scene.xml
+```
+
+验证：
+
+```bash
+make sim
+ros2 topic hz /robot/status
+```
+
+若日志出现「mujoco 未安装」或「模型不存在」，会回退到合成图像，不报错。
+
+### 相机名对应
+
+接口相机名 `front` / `wrist` 与 MuJoCo XML 里的相机名可能不同，映射在
+`robot/sim.py` 的 `DEFAULT_CAMERA_MAP` 中：
+
+```python
+DEFAULT_CAMERA_MAP = {"front": "front_cam", "wrist": "wrist_cam"}
+```
+
+模型里的相机名请用 `python -c "import mujoco; m=mujoco.MjModel.from_xml_path('...'); print([mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_CAMERA, i) for i in range(m.ncam)])"` 查。

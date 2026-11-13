@@ -84,6 +84,9 @@ ros2_ws/src/
 ## 快速开始
 
 ```bash
+# 0. 仿真模型（可选，不装则用合成图像）
+bash scripts/download_sim_model.sh
+
 # 1. 依赖（Ubuntu 22.04）
 sudo apt install ros-humble-desktop python3-colcon-common-extensions
 pip install -e "ros2_ws/src/voice_arm_core[dev]"
@@ -115,12 +118,14 @@ make real
 | 模块 | 状态 | 说明 |
 |:---|:---:|:---|
 | ROS2 骨架与话题 | ✅ | 三个包、五个节点、两套 launch |
-| 核心库接口 | ✅ | 12 个测试通过 |
-| 仿真节点 | ✅ | 可启动，产生占位动作 |
+| 核心库接口 | ✅ | 18 个测试通过 |
+| 仿真后端 | ✅ | 支持 MuJoCo，未装模型时回退合成图像 |
+| 双相机与单位转换 | ✅ | 接口固定两路；度→弧度带越界断言 |
 | VLM 接入 | ⏳ | 调 `voice_arm_core.vlm.client.VLMClient` |
 | 策略推理 | ⏳ | 调 `voice_arm_core.policy.runner.PolicyRunner` |
-| 真机驱动 | ⏳ | 队友实现 `robot_node` 回调 |
+| 真机驱动 | ⏳ | 队友实现 `real.py` 与 `robot_node` 回调 |
 | 语音链路 | ⏳ | openWakeWord + FunASR + edge-tts |
+| 数据采集 | ⏳ | 仿真采集脚本待写 |
 
 **硬件选型尚未确定。** 接口契约已固定（见 [docs/interface.md](docs/interface.md)），硬件侧按契约实现即可，上层代码不需要改。
 

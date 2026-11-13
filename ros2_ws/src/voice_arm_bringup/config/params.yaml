@@ -9,6 +9,8 @@ vlm_node:
     model: deepseek-flash
     base_url: https://api.deepseek.com
     confidence_threshold: 0.6
+    # 只做翻译与存在性确认，不输出坐标（见 docs/architecture.md）
+    output_position_hint: true
 
 policy_node:
   ros__parameters:
@@ -20,6 +22,16 @@ robot_node:
   ros__parameters:
     backend: sim
     dof: 6
-    control_hz: 30
+    # 总线控制环建议 100 Hz；上报 50 Hz；上位机循环 30 Hz
+    control_hz: 100
+    report_hz: 50
     port: /dev/ttyACM0
     leader_port: /dev/ttyACM1
+    # 相机数量一旦确定不能改，否则训练数据格式失效
+    cameras: ["front", "wrist"]
+    camera_front: 0
+    camera_wrist: 1
+    image_width: 640
+    image_height: 480
+    # 仿真模型路径，为空时使用合成图像
+    sim_xml: ""

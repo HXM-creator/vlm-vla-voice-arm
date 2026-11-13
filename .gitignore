@@ -49,3 +49,6 @@ desktop.ini
 # 编辑器
 .vscode/
 .idea/
+
+# 仿真模型资源（体积大，用 scripts/download_sim_model.sh 下载）
+ros2_ws/src/voice_arm_core/voice_arm/sim/assets/

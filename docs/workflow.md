@@ -118,6 +118,45 @@ xdg-open outputs/dashboard/index.html
 | B10 | `gladLoadGL error` | 默认 GLFW 后端不可用 | `export MUJOCO_GL=egl` | 无显示/EGL 环境 |
 | B11 | 场景里没有可抓物体 | `scene.xml` 只有地面和机械臂 | 加三个彩色方块 + freejoint | 抓取验证 |
 | B12 | `wrist_cam` 拍到夹爪外壳 | 相机在夹爪内部 | 外移到指尖外 0.17 m | 腕部视角 |
+| B13 | 采出的视频臂变青色、地面变棕色 | `SimRobot` 输出 BGR，lerobot 数据集约定 RGB，直接透传导致通道反转 | 写入数据集前 `[:, :, ::-1]` 转 RGB | 所有 lerobot 格式采集 |
+| B14 | 夹爪闭合抬起了，方块却留在原地 | `SimRobot` 只 `mj_forward` 不 `mj_step`，没有接触力 | 闭合时刻记录方块相对夹爪偏移，之后每帧把方块 qpos 搬到夹爪 | 仿真抓取演示 |
+| B15 | 动作数值在 ±0.5 左右，关节被压住 | **跳过 lerobot 的 pre/post processor**，输出停在归一化空间 | 按 checkpoint 加载 `policy_preprocessor/postprocessor.json`，pre → select_action → post | 所有 ACT 推理 |
+
+### 单位约定与跨数据集复用
+
+这是最容易踩、且**不报错**的一个坑，单独列一节。
+
+| 层 | 单位 | 依据 |
+|:---|:---|:---|
+| `RobotInterface`（仿真/真机接口） | **弧度** | `AGENTS.md` 冻结契约 |
+| 真机硬件（舵机） | **度** | 转换只在 `RealRobot` 一处 |
+| 公开数据集（geonmin-kim 等） | **度** | 实测动作跨度 171.5，mean -84.67 |
+| 自采仿真数据 | **弧度** | 实测跨度 1.29，mean 0.75 |
+
+**数值差 57 倍**（180/π）。直接拿公开数据集的 checkpoint 驱动仿真，关节会被打到限位
+而且不报错——只会表现为“动作很怪”。
+
+`PolicyRunner` 的处理顺序（缺一不可）：
+
+```
+原始图像/弧度 state
+   ↓ _to_batch（BGR→RGB、按 input_features 映射相机名）
+   ↓ pre processor（AddBatchDimension → Device → Normalizer）
+policy.select_action
+   ↓ post processor（Unnormalizer → Device）      ← 漏掉这步会得到归一化空间的数
+度（若训练数据用度）
+   ↓ deg2rad（_output_unit == "deg" 时）
+弧度（交给 SimRobot / RealRobot）
+```
+
+可用参数覆盖自动判断：
+
+```python
+PolicyRunner(checkpoint=..., action_unit="rad")   # auto | rad | deg
+```
+
+**跨数据集复用的边界**：格式对齐后代码不用改，但模型不能互换——仿真训的拿去真机跑，
+图像分布差距（合成渲染 vs 真实光照纹理）会让成功率归零。
 
 ### 尚未修复
 

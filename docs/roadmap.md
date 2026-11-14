@@ -134,11 +134,52 @@ q_start ──余弦──> q_above（方块上方 8 cm）
 - [ ] 采集 150 条（3 色 × 50）
 - [ ] `check_dataset` 全绿，统计位置分布
 
-### W3（11/29–12/5）正式训练
+### W3（11/29–12/5）正式训练（云端算力）
 
-- [ ] 训练 20000 步（4060，batch 8，约 2–4 h）
+- [ ] 训练 20000 步（云端 4090/A100，batch 64，约 2–3 h，成本 ≈¥10）
 - [ ] 语言条件 ≥ 0.05（现在 0.014 只是刚过阈值）
 - [ ] 失败时按 `experiments.md` 排查：颜色位置绑定 / task 字段 / 模板一致性
+
+**策略选择**：本地 RTX 4060 只做冒烟（batch 4、500 步）；正式训练放云端。
+显存不再是约束后，ACT 与 SmolVLA 都可选：
+
+| 方案 | 模型 | 显存 | 成本 | 语言条件强度 |
+|:---|:---|--:|--:|:---|
+| A | ACT 52M | 8 GB | ¥10 | 中 |
+| B | SmolVLA 500M | 16–24 GB | ¥60–120 | 强（自带 VLM backbone） |
+
+SmolVLA **不能替代 VLM 层**（它不懂中文），但它对英文指令更敏感，语言条件的数据会更好看。
+
+### 云端训练 SOP
+
+```bash
+# 1. 本地打包（1–2 GB，压缩后更小）
+tar czf sim_data.tar.gz -C outputs/datasets sim_green
+
+# 2. 云端锁版本（务必，否则参数前缀会变）
+pip install "lerobot==0.4.4" "huggingface_hub==0.35.3" "hf_transfer==0.1.9"
+pip install "mujoco>=3.0" av
+
+# 3. 解压并训练（开断点续训，防止机器被回收）
+tar xzf sim_data.tar.gz -C outputs/datasets/
+lerobot-train --policy.type=act \
+  --dataset.repo_id=local/sim_green \
+  --dataset.root=$PWD/outputs/datasets/sim_green \
+  --dataset.video_backend=pyav \
+  --output_dir=outputs/train/act_cloud \
+  --policy.n_action_steps=10 \
+  --batch_size=64 --steps=20000 --policy.device=cuda \
+  --save_freq=5000 --resume=true
+
+# 4. 取回 checkpoint（ACT 198 MB / SmolVLA 约 2 GB）
+ls outputs/train/act_cloud/checkpoints/*/pretrained_model
+```
+
+**四条注意事项**：
+1. `--dataset.video_backend=pyav` 必须加（社区项目独立验证过同样的 torchcodec 问题）
+2. `--policy.n_action_steps=10`（默认 100 太大，桌面抓取会开环跑偏）
+3. `--save_freq=5000` + `--resume=true`，机器被回收也不白花钱
+4. 数据用 `--dataset.root` 指定本地解压路径，避免训练时联网下载
 
 ### W4（12/6–12/12）VLM 联调
 

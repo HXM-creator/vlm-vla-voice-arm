@@ -71,8 +71,15 @@ def load_lang() -> dict | None:
     }
 
 
+def load_video() -> str | None:
+    """回放视频存在则返回相对 index.html 的路径。"""
+    if (ROOT / "outputs/replay/rollout.mp4").exists():
+        return "../replay/rollout.mp4"
+    return None
+
+
 def main() -> None:
-    payload = {"replay": load_replay(), "lang": load_lang()}
+    payload = {"replay": load_replay(), "lang": load_lang(), "video": load_video()}
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     target = OUT_DIR / "data.js"
     body = json.dumps(payload, ensure_ascii=False, indent=None)

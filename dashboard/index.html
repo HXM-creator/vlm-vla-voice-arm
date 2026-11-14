@@ -62,6 +62,15 @@
 
   <div class="cards" id="cards"></div>
 
+  <section id="videoSection" style="display:none">
+    <h2>仿真回放 <small>左：front_cam　右：wrist_cam</small></h2>
+    <div class="panel">
+      <video id="rollout" controls loop muted playsinline
+             style="width:100%;border-radius:6px;background:#000"></video>
+      <div class="hint">由 scripts/render_replay_video.py 生成（outputs/replay/rollout.mp4）。</div>
+    </div>
+  </section>
+
   <section>
     <h2>关节动作曲线 <small>来自 outputs/replay/replay.npz</small></h2>
     <div class="panel">
@@ -93,6 +102,13 @@
   const D = window.DASHBOARD || {};
   const REPLAY = D.replay || null;
   const LANG = D.lang || null;
+
+  if (D.video) {
+    const section = document.getElementById("videoSection");
+    const video = document.getElementById("rollout");
+    section.style.display = "";
+    video.src = D.video;
+  }
 
   const COLORS = ["#58a6ff", "#3fb950", "#d29922", "#f85149", "#bc8cff", "#39c5cf"];
 

@@ -107,7 +107,7 @@
                 <!-- Frame gripperframe -->
                 <site group="3" name="gripperframe" pos="-0.0079 -0.000218121 -0.0981274" quat="0.707107 -0 0.707107 -2.37788e-17"/>
                 <!-- 腕部相机：随夹爪运动，置于指尖外侧，朝前下方约 70° 俯视工作区 -->
-                <camera name="wrist_cam" pos="0 0 -0.105" quat="0.811 0 0.585 0" fovy="85"/>
+                <camera name="wrist_cam" pos="0 0 -0.17" quat="0.811 0 0.585 0" fovy="85"/>
                 <!-- Link moving_jaw_so101_v1 -->
                 <body name="moving_jaw_so101_v1" pos="0.0202 0.0188 -0.0234" quat="0.707107 0.707107 -1.85362e-08 1.85362e-08">
                   <!-- Joint from gripper to moving_jaw_so101_v1 -->

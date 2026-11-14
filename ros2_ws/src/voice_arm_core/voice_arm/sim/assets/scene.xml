@@ -20,5 +20,7 @@
     <worldbody>
         <light pos="0 0 3.5" dir="0 0 -1" directional="true" />
         <geom name="floor" size="0 0 0.05" pos="0 0 0" type="plane" material="groundplane" />
+        <!-- 桌面视角相机：从 -y 侧斜上方俯视，框住整条臂与工作区（实测拟合） -->
+        <camera name="front_cam" pos="0.126 -0.7133 0.3618" xyaxes="1 0 0 0 0.3090 0.9511" fovy="45" />
     </worldbody>
 </mujoco>

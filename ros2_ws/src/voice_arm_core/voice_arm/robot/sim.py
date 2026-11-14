@@ -69,6 +69,8 @@ class SimRobot(RobotInterface):
         self._mj = mujoco.MjModel.from_xml_path(str(xml_path))
         self._data = mujoco.MjData(self._mj)
         self._renderer = mujoco.Renderer(self._mj, self.h, self.w)
+        # 初始运动学必须算一次，否则 xpos 全为 0，渲染时所有几何体堆在原点
+        mujoco.mj_forward(self._mj, self._data)
         log.info("MuJoCo 模型已加载：%s（nq=%d）", xml_path.name, self._mj.nq)
 
     def _render_rgb(self, camera: str) -> np.ndarray:

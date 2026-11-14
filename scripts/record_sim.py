@@ -79,9 +79,15 @@ def grasp_waypoints(robot: SimRobot, body_name: str) -> tuple[np.ndarray, ...]:
     cube = np.asarray(data.xpos[bid], dtype=np.float64).copy()
 
     q0 = robot.get_joint_positions().astype(np.float64)
-    q_above, e1 = solve_ik(model, data, cube + np.array([0, 0, 0.08]), q0)
-    q_grasp, e2 = solve_ik(model, data, cube + np.array([0, 0, 0.02]), q_above)
-    q_lift, e3 = solve_ik(model, data, cube + np.array([0, 0, 0.14]), q_grasp)
+    # SO-101 腕部行程有限（wrist_roll 实测会撞 -2.744 限位），从正上方垂直
+    # 抓取不可达。真实使用也是斜着接近，这里把夹爪轴偏 30°。
+    approach = np.array([0.0, -0.5, -0.866])
+    q_above, e1 = solve_ik(model, data, cube + np.array([0, 0, 0.08]), q0,
+                           target_z=approach)
+    q_grasp, e2 = solve_ik(model, data, cube + np.array([0, 0, 0.02]), q_above,
+                           target_z=approach)
+    q_lift, e3 = solve_ik(model, data, cube + np.array([0, 0, 0.14]), q_grasp,
+                          target_z=approach)
     print(f"    IK 误差: 上方 {e1 * 1000:.1f}mm / 抓取 {e2 * 1000:.1f}mm / 抬起 {e3 * 1000:.1f}mm")
     return q_above, q_grasp, q_lift
 

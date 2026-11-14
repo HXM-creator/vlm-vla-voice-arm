@@ -111,7 +111,7 @@ def write_npz(out_dir: Path, episodes: list[list[dict]], task: str, fps: int) ->
 def write_lerobot(repo_id: str, root: Path, episodes: list[list[dict]],
                   task: str, fps: int, image_size: tuple[int, int]) -> Path:
     """写入 LeRobotDataset v3。接口与 lerobot-record 保持一致。"""
-    from lerobot.datasets import LeRobotDataset
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
     h, w = image_size
     features = {

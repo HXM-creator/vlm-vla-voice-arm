@@ -22,6 +22,9 @@ DEFAULT_CAMERA_MAP = {
     "wrist": "wrist_cam",
 }
 
+# 关节角超出限位多少弧度以内可以直接截断（避免浮点误差误报）
+CLAMP_TOLERANCE = 1e-3
+
 
 class SimRobot(RobotInterface):
     """仿真机械臂。
@@ -47,6 +50,7 @@ class SimRobot(RobotInterface):
         self._q = np.zeros(dof, dtype=np.float32)
         self._gripper = 0.0
         self._connected = False
+        self._limit_warned = False
 
         self._mj = None
         self._data = None
@@ -95,6 +99,21 @@ class SimRobot(RobotInterface):
         q = np.asarray(q, dtype=np.float32)
         if q.shape != (self.dof,):
             raise ValueError(f"expected shape ({self.dof},), got {q.shape}")
+
+        # 超限动作在仿真里会被静默接受，真机上会撞限位。这里截断并显式报错一次，
+        # 让“策略输出超出关节范围”这类问题在第一次发生时就暴露出来。
+        if self._mj is not None:
+            limited = self._mj.jnt_limited[: self.dof].astype(bool)
+            lo = np.where(limited, self._mj.jnt_range[: self.dof, 0], -np.inf)
+            hi = np.where(limited, self._mj.jnt_range[: self.dof, 1], np.inf)
+            excess = float(np.max(np.maximum(lo - q, q - hi)))
+            if excess > CLAMP_TOLERANCE:
+                if not self._limit_warned:
+                    log.error("关节角超限 %.3f rad，已截断；检查策略单位或训练数据：q=%s",
+                              excess, np.round(q, 2))
+                    self._limit_warned = True
+                q = np.clip(q, lo, hi).astype(np.float32)
+
         self._q = q.copy()
 
         if self._data is not None:

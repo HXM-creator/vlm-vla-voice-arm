@@ -14,6 +14,14 @@ import numpy as np
 log = logging.getLogger(__name__)
 
 
+class PolicyError(RuntimeError):
+    """策略连续推理失败，已超出可容忍范围。"""
+
+
+# 连续失败多少次后不再静默返回零动作，而是抛错让上层处理
+MAX_CONSECUTIVE_FAILURES = 10
+
+
 class PolicyRunner:
     """策略推理封装。
 
@@ -34,6 +42,8 @@ class PolicyRunner:
         self._output_unit = "rad"
         self._pre = None                        # checkpoint 的 preprocessor
         self._post = None                       # checkpoint 的 postprocessor
+        self._failures = 0                      # 连续推理失败次数
+        self.healthy = True                     # 供上层监控；连续失败后置 False
         self.policy = None
         self.instruction = ""
         if checkpoint:
@@ -174,9 +184,19 @@ class PolicyRunner:
             if arr.shape[0] < self.action_chunk:
                 pad = np.repeat(arr[-1:], self.action_chunk - arr.shape[0], axis=0)
                 arr = np.concatenate([arr, pad], axis=0)
+            self._failures = 0
+            self.healthy = True
             return arr[: self.action_chunk]
-        except Exception as exc:  # noqa: BLE001  推理失败不应打断控制环
-            log.warning("策略推理失败（%s），本次返回零动作", exc)
+        except Exception as exc:  # noqa: BLE001  单次失败不打断控制环
+            self._failures += 1
+            self.healthy = False
+            # 只在前几次和每 10 次打 error，避免 30 Hz 刷屏，但不会静默
+            if self._failures == 1 or self._failures % 10 == 0:
+                log.error("策略推理失败（连续 %d 次）：%s", self._failures, exc)
+            if self._failures >= MAX_CONSECUTIVE_FAILURES:
+                raise PolicyError(
+                    f"策略连续 {self._failures} 次推理失败，最后一次：{exc}"
+                ) from exc
             return np.zeros((self.action_chunk, self.dof), dtype=np.float32)
 
     def _camera_mapping(self) -> dict[str, str]:

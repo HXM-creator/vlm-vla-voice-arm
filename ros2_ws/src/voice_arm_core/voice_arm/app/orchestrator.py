@@ -66,6 +66,8 @@ class Orchestrator:
         self._exec_steps_left = 0
         # VLM 解析出的英文指令，执行线程要用它作为 VLA 的语言条件
         self._active_instruction = ""
+        # 执行线程出错时置位，FEEDBACK 阶段据此播报，避免把失败说成“完成了”
+        self._exec_failed = False
 
     # ---------- 对外接口 ----------
     def submit_instruction(self, text: str) -> None:
@@ -119,6 +121,7 @@ class Orchestrator:
                 self._active_instruction = _vla_instruction(cmd)
                 log.info("vla instruction: %s", self._active_instruction)
                 self._exec_steps_left = int(self.cfg.get("policy", {}).get("action_chunk", 16))
+                self._exec_failed = False
                 self.sm.transition(State.EXECUTING)
 
         if self.sm.state is State.CONFIRMING:
@@ -127,7 +130,8 @@ class Orchestrator:
 
         if self.sm.state is State.EXECUTING and self._exec_steps_left <= 0:
             self.sm.transition(State.FEEDBACK)
-            self._speak("完成了")
+            # 执行失败不能播报“完成了”，否则用户会以为抓取成功
+            self._speak("执行失败，请重试" if self._exec_failed else "完成了")
 
         return self.sm.state
 
@@ -173,6 +177,7 @@ class Orchestrator:
             except Exception as exc:  # noqa: BLE001
                 log.error("exec failed: %s", exc)
                 self._exec_steps_left = 0
+                self._exec_failed = True
 
             rest = period - (time.monotonic() - loop_start)
             if rest > 0:
@@ -261,9 +266,33 @@ def build_robot(cfg: dict):
     )
 
 
+def _validate_config(cfg: dict) -> None:
+    """启动时检查关键配置。
+
+    空配置会让系统“看起来在跑”但实际什么都没做（零动作 + 合成图），
+    这类问题必须在这里变成可见警告，而不是等人看视频才发现。
+    """
+    policy = cfg.get("policy", {})
+    robot = cfg.get("robot", {})
+
+    if not policy.get("checkpoint"):
+        log.warning("policy.checkpoint 为空：策略将始终返回零动作，机械臂不会动")
+
+    if robot.get("backend") == "sim":
+        xml = robot.get("sim_xml")
+        if not xml:
+            log.warning("robot.sim_xml 为空：使用合成图像，不是 MuJoCo 场景")
+        else:
+            from pathlib import Path
+
+            if not Path(xml).exists():
+                log.error("robot.sim_xml 文件不存在：%s", xml)
+
+
 def run(config_path: str, duration_s: float | None = None) -> None:
     cfg = load_config(config_path)
     setup_logging()
+    _validate_config(cfg)
     robot = build_robot(cfg)
     policy = PolicyRunner(
         checkpoint=cfg.get("policy", {}).get("checkpoint") or None,

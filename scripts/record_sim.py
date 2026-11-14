@@ -115,6 +115,13 @@ def collect_episode(robot: SimRobot, fps: int, duration_s: float,
         from voice_arm.sim.kinematics import site_id
 
         model, data = robot.model, robot.data
+        # 每条 episode 重新摆放三个方块：位置随机、互不重叠、颜色与位置解耦
+        from voice_arm.sim.scene import apply_positions, describe, sample_positions
+
+        positions = sample_positions(rng)
+        apply_positions(model, data, positions)
+        print(f"    位置: {describe(positions)}")
+
         cube_bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, target[1])
         cube_adr = int(model.jnt_qposadr[model.body_jntadr[cube_bid]])
         site = site_id(model)

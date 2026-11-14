@@ -183,3 +183,49 @@ python -m voice_arm.app.orchestrator --config ros2_ws/src/voice_arm_bringup/conf
 
 **结论：代码与单测就绪，端到端尚未验证。**
 阶段 1 之后的每一步都需要在 Ubuntu 环境里实际跑一次，当前只在 Windows 上完成了逻辑与格式验证。
+
+---
+
+## 6. 公开数据集路径（无硬件时优先）
+
+详细清单见 [datasets.md](datasets.md)。两条可用路径：
+
+### 6.1 官方 SO-101（验证流程）
+
+```bash
+export HF_ENDPOINT=https://hf-mirror.com
+
+lerobot-train \
+  --policy.type=act \
+  --dataset.repo_id=lerobot/svla_so101_pickplace \
+  --output_dir=outputs/train/act_public \
+  --batch_size=8 --steps=5000 --policy.device=cuda
+```
+
+- 50 episodes、2 相机、**单任务**
+- **只能验证「环境能跑、loss 下降」**
+- 格式是 v2.1，可能需要 `convert_dataset_v21_to_v30`
+
+### 6.2 三色多任务（验证语言条件）
+
+```bash
+python -c "
+from lerobot.datasets import LeRobotDataset
+ds = LeRobotDataset('geonmin-kim/SO101-lv4-3color-cube-mat-to-mat-no-human-reset-v1')
+print('episodes:', ds.num_episodes, 'features:', list(ds.features))
+"
+```
+
+- SO-101、v3.0、双相机、**三色 + 多任务**
+- **可以用来验证语言条件**：不同颜色指令是否产生不同动作
+
+### 6.3 使用边界
+
+| 项 | 公开数据集 | 你的真机 |
+|:---|:---:|:---:|
+| 训练流程 | ✅ 能验证 | — |
+| 语言条件 | ✅（三色那个） | 待测 |
+| 相机位置 | ❌ 不同 | ✅ |
+| 物体与光照 | ❌ 不同 | ✅ |
+
+**能证明方法可行，不能替代你的数据。**

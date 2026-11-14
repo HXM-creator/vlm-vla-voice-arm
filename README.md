@@ -126,6 +126,9 @@ docs/        decisions · architecture · interface · schema · experiments · 
 | [指令 Schema](docs/schema.md) | 改 VLM 输出字段时看约束与降级规则 |
 | [验证流程](docs/experiments.md) | 每个阶段的命令、通过标准、失败排查 |
 | [环境搭建](docs/setup.md) | 新机器从零装 ROS2 与依赖 |
+| [硬件清单](docs/bom.md) | 选型、价格、采购确认点 |
+| [公开数据集](docs/datasets.md) | 无真机时用哪些数据、能验证什么 |
+| [团队文档](docs/team/) | 给硬件侧的分工与确认清单 |
 | [换机器接续](docs/handoff.md) | 从 Windows 换到 Ubuntu 时按此走 |
 | [会话记录](docs/journal/) | 上次做到哪、遗留什么问题 |
 

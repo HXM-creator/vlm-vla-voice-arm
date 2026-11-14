@@ -63,3 +63,59 @@ make test                             # 37 个测试
 - `DEEPSEEK_API_KEY` 只放环境变量，**不写进任何文件**
 - 数据、权重、视频已在 `.gitignore` 中排除
 - 仓库是 public，提交前确认没有个人信息与本地绝对路径
+
+---
+
+## 附：Ubuntu 一步到位
+
+```bash
+# 1. 拿到代码
+git clone git@github.com:HXM-creator/vlm-vla-voice-arm.git
+cd vlm-vla-voice-arm
+
+# 2. 镜像（国内必需）
+export HF_ENDPOINT=https://hf-mirror.com
+pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+
+# 3. 环境
+bash scripts/setup_env.sh --check
+bash scripts/setup_env.sh --train --audio
+python scripts/doctor.py
+make test
+
+# 4. 验证仿真
+python scripts/record_sim.py --episodes 2 --duration 2 \
+  --sim-xml ros2_ws/src/voice_arm_core/voice_arm/sim/assets/scene.xml
+python scripts/check_dataset.py --path outputs/datasets/sim_demo
+```
+
+## 附：无真机时的实验顺序
+
+```bash
+# ① 公开数据集验证训练流程
+lerobot-train --policy.type=act \
+  --dataset.repo_id=lerobot/svla_so101_pickplace \
+  --output_dir=outputs/train/act_public --steps=5000 --batch_size=8
+
+# ② 三色多任务验证语言条件
+python scripts/check_language_conditioning.py \
+  --checkpoint outputs/train/act_public/checkpoints/last \
+  --instructions "pick up the green cube" "pick up the blue cube"
+
+# ③ 仿真自采数据
+python scripts/record_sim.py --episodes 200 \
+  --sim-xml ros2_ws/src/voice_arm_core/voice_arm/sim/assets/scene.xml
+
+# ④ 训练 + 回放
+bash scripts/train_act.sh local/sim_multi
+python scripts/replay_sim.py --checkpoint outputs/train/act/checkpoints/last --steps 200
+```
+
+## 附：常用镜像
+
+| 用途 | 地址 |
+|:---|:---|
+| Python 包 | `https://pypi.tuna.tsinghua.edu.cn/simple` |
+| HuggingFace | `https://hf-mirror.com` |
+| GitHub clone | `https://gh-proxy.com/https://github.com/...` |
+| ROS2 apt | 清华镜像替换 `packages.ros.org` |

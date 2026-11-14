@@ -25,10 +25,15 @@ class PolicyRunner:
     """
 
     def __init__(self, checkpoint: str | None = None, action_chunk: int = 16,
-                 dof: int = 6, device: str = "cuda"):
+                 dof: int = 6, device: str = "cuda",
+                 action_unit: str = "auto"):
         self.action_chunk = action_chunk
         self.dof = dof
         self.device = device
+        self.action_unit = action_unit          # auto | rad | deg
+        self._output_unit = "rad"
+        self._pre = None                        # checkpoint 的 preprocessor
+        self._post = None                       # checkpoint 的 postprocessor
         self.policy = None
         self.instruction = ""
         if checkpoint:
@@ -56,6 +61,61 @@ class PolicyRunner:
             return None
         return LeRobotDatasetMetadata(repo_id, root=dataset.get("root"))
 
+    def _load_processors(self, checkpoint: str) -> None:
+        """加载 checkpoint 里的归一化/反归一化管线。
+
+        lerobot 0.4 的 ACT 不在 policy 内部做归一化，而是在
+        policy_preprocessor.json / policy_postprocessor.json 里描述。
+        跳过这一步会得到归一化空间的数（实测 -0.74~0.54），
+        既不是度也不是弧度，关节会被打到限位且不报错。
+        """
+        from lerobot.processor import PolicyProcessorPipeline
+
+        overrides = {"device_processor": {"device": self.device}}
+        try:
+            self._pre = PolicyProcessorPipeline.from_pretrained(
+                checkpoint, config_filename="policy_preprocessor.json", overrides=overrides
+            )
+            self._post = PolicyProcessorPipeline.from_pretrained(
+                checkpoint, config_filename="policy_postprocessor.json", overrides=overrides
+            )
+            log.info("处理器已加载：pre %d 步 / post %d 步",
+                     len(self._pre.steps), len(self._post.steps))
+        except Exception as exc:  # noqa: BLE001  缺文件时退回无归一化路径
+            self._pre = self._post = None
+            log.warning("归一化处理器加载失败（%s），动作数值可能不可用", exc)
+
+    def _resolve_action_unit(self, checkpoint: str) -> str:
+        """判断 checkpoint 训练数据的动作单位。
+
+        项目的 RobotInterface 用弧度，但公开数据集（如 geonmin-kim 的 SO-101
+        数据）用度。两者数值差 57 倍，直接用会把关节打到限位，而且不会报错。
+        auto 模式按动作跨度判断：超过 10 视为度（弧度跨度不会超过 2π）。
+        """
+        if self.action_unit in ("rad", "deg"):
+            return self.action_unit
+
+        import json
+        from pathlib import Path
+
+        try:
+            train_cfg = Path(checkpoint) / "train_config.json"
+            dataset = json.loads(train_cfg.read_text()).get("dataset") or {}
+            root = dataset.get("root")
+            if not root:
+                return "rad"
+            stats = json.loads((Path(root) / "meta" / "stats.json").read_text())
+            action = stats["action"]
+            span = float(
+                max(abs(hi - lo) for lo, hi in zip(action["min"], action["max"]))
+            )
+            unit = "deg" if span > 10.0 else "rad"
+            log.info("训练数据动作单位检测：%s（关节跨度 %.1f）", unit, span)
+            return unit
+        except Exception as exc:  # noqa: BLE001  缺统计量时按接口默认弧度
+            log.debug("动作单位检测失败（%s），按弧度处理", exc)
+            return "rad"
+
     def _load(self, checkpoint: str) -> None:
         try:
             from lerobot.configs.policies import PreTrainedConfig
@@ -71,7 +131,9 @@ class PolicyRunner:
             policy = make_policy(cfg, ds_meta=self._dataset_meta(checkpoint))
             policy.eval()
             self.policy = policy
-            log.info("policy loaded from %s", checkpoint)
+            self._output_unit = self._resolve_action_unit(checkpoint)
+            self._load_processors(checkpoint)
+            log.info("policy loaded from %s（动作单位 %s）", checkpoint, self._output_unit)
         except Exception as exc:  # noqa: BLE001  接口变动或权重损坏
             log.warning("加载策略失败（%s），保持零动作回退", exc)
 
@@ -90,13 +152,25 @@ class PolicyRunner:
             return np.zeros((self.action_chunk, self.dof), dtype=np.float32)
 
         try:
-            batch = self._to_batch(frames, instruction, state)
+            raw = self._to_batch(frames, instruction, state)
+            if self._pre is not None:
+                batch = self._pre(raw)
+            else:
+                # 没有归一化管线时退回旧路径：手动补 batch 维
+                batch = {k: (v.unsqueeze(0) if hasattr(v, "unsqueeze") else v)
+                         for k, v in raw.items()}
             with np.errstate(all="ignore"):
                 action = self.policy.select_action(batch)
+            if self._post is not None:
+                out = self._post({"action": action})
+                action = out["action"] if isinstance(out, dict) else out
             # GPU 上 select_action 返回 cuda tensor，必须先搬到 host 再转 numpy
             if hasattr(action, "detach"):
                 action = action.detach().cpu().numpy()
             arr = np.asarray(action, dtype=np.float32).reshape(-1, self.dof)
+            if self._output_unit == "deg":
+                # 公开数据集的 checkpoint 输出度，接口约定是弧度
+                arr = np.deg2rad(arr).astype(np.float32)
             if arr.shape[0] < self.action_chunk:
                 pad = np.repeat(arr[-1:], self.action_chunk - arr.shape[0], axis=0)
                 arr = np.concatenate([arr, pad], axis=0)
@@ -144,8 +218,8 @@ class PolicyRunner:
                 continue
             rgb = np.asarray(img)[:, :, ::-1]           # BGR -> RGB
             tensor = torch.from_numpy(rgb.copy()).permute(2, 0, 1).float() / 255.0
-            batch[key] = tensor.unsqueeze(0).to(self.device)
+            batch[key] = tensor.to(self.device)
         if state is not None:
-            st = torch.as_tensor(np.asarray(state, dtype=np.float32)).reshape(1, -1)
+            st = torch.as_tensor(np.asarray(state, dtype=np.float32)).reshape(-1)
             batch["observation.state"] = st.to(self.device)
         return batch

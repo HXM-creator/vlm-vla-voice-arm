@@ -38,12 +38,14 @@ def main() -> None:
     ap.add_argument("--image-size", default="480,640")
     ap.add_argument("--sim-xml", default="")
     ap.add_argument("--output", default="outputs/replay")
+    ap.add_argument("--device", default="cuda", help="推理设备：cuda / cpu")
     args = ap.parse_args()
 
     robot = SimRobot(dof=6, image_size=parse_size(args.image_size),
                      xml_path=args.sim_xml or None, cameras=("front", "wrist"))
     robot.connect()
-    policy = PolicyRunner(checkpoint=args.checkpoint or None, action_chunk=1, dof=6)
+    policy = PolicyRunner(checkpoint=args.checkpoint or None, action_chunk=1, dof=6,
+                          device=args.device)
 
     actions: list[np.ndarray] = []
     states: list[np.ndarray] = []
@@ -53,7 +55,8 @@ def main() -> None:
     for i in range(args.steps):
         loop_start = time.monotonic()
         frames = robot.get_frames()
-        act = policy.predict(frames, instruction="pick up the green cube")
+        act = policy.predict(frames, instruction="pick up the green cube",
+                             state=robot.get_joint_positions())
         q = act[0]
         robot.set_joint_positions(q)
         actions.append(np.asarray(q, dtype=np.float32))

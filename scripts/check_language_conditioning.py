@@ -51,9 +51,10 @@ def rollout(policy: PolicyRunner, robot: SimRobot, instruction: str,
     """在固定场景下执行一条指令，返回逐步动作 (steps, dof)。"""
     reset_scene(robot, policy.dof)
     frames = robot.get_frames()  # 固定场景：只取一次，避免相机抖动干扰对比
+    state = robot.get_joint_positions()  # 控制变量：各指令用同一初始状态
     actions = []
     for _ in range(steps):
-        act = policy.predict(frames, instruction)
+        act = policy.predict(frames, instruction, state=state)
         actions.append(np.asarray(act[0], dtype=np.float32))
     return np.stack(actions)
 
@@ -85,6 +86,7 @@ def main() -> None:
     ap.add_argument("--image-size", default="480,640")
     ap.add_argument("--sim-xml", default="")
     ap.add_argument("--output", default="outputs/lang_check")
+    ap.add_argument("--device", default="cuda", help="推理设备：cuda / cpu")
     args = ap.parse_args()
 
     if len(args.instructions) < 2:
@@ -94,7 +96,8 @@ def main() -> None:
     robot = SimRobot(dof=6, image_size=parse_size(args.image_size),
                      xml_path=args.sim_xml or None, cameras=("front", "wrist"))
     robot.connect()
-    policy = PolicyRunner(checkpoint=args.checkpoint or None, action_chunk=1, dof=6)
+    policy = PolicyRunner(checkpoint=args.checkpoint or None, action_chunk=1, dof=6,
+                          device=args.device)
 
     trajs = []
     for ins in args.instructions:

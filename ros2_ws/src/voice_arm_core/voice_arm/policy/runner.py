@@ -35,6 +35,27 @@ class PolicyRunner:
             self._load(checkpoint)
 
     # ---------- 加载 ----------
+    def _dataset_meta(self, checkpoint: str):
+        """从 checkpoint 的 train_config.json 还原数据集元数据。
+
+        ACT 的预处理/后处理器需要数据集统计量（归一化参数），
+        make_policy 传 ds_meta=None 会直接报
+        "Either one of a dataset metadata or a sim env must be provided."。
+        """
+        import json
+        from pathlib import Path
+
+        from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
+
+        train_cfg = Path(checkpoint) / "train_config.json"
+        if not train_cfg.exists():
+            return None
+        dataset = json.loads(train_cfg.read_text()).get("dataset") or {}
+        repo_id = dataset.get("repo_id")
+        if not repo_id:
+            return None
+        return LeRobotDatasetMetadata(repo_id, root=dataset.get("root"))
+
     def _load(self, checkpoint: str) -> None:
         try:
             from lerobot.configs.policies import PreTrainedConfig
@@ -47,7 +68,7 @@ class PolicyRunner:
             cfg = PreTrainedConfig.from_pretrained(checkpoint)
             cfg.pretrained_path = checkpoint
             cfg.device = self.device
-            policy = make_policy(cfg, ds_meta=None)
+            policy = make_policy(cfg, ds_meta=self._dataset_meta(checkpoint))
             policy.eval()
             self.policy = policy
             log.info("policy loaded from %s", checkpoint)
@@ -55,19 +76,21 @@ class PolicyRunner:
             log.warning("加载策略失败（%s），保持零动作回退", exc)
 
     # ---------- 推理 ----------
-    def predict(self, frames: dict[str, np.ndarray], instruction: str) -> np.ndarray:
+    def predict(self, frames: dict[str, np.ndarray], instruction: str,
+                state: np.ndarray | None = None) -> np.ndarray:
         """返回 shape=(action_chunk, dof) 的动作块。
 
         Args:
             frames: 至少包含 front；wrist 可选
             instruction: 已由上层拼好的英文任务模板
+            state: 当前关节位置；ACT 的输入需要它，缺失时策略会报错回退
         """
         self.instruction = instruction
         if self.policy is None:
             return np.zeros((self.action_chunk, self.dof), dtype=np.float32)
 
         try:
-            batch = self._to_batch(frames, instruction)
+            batch = self._to_batch(frames, instruction, state)
             with np.errstate(all="ignore"):
                 action = self.policy.select_action(batch)
             arr = np.asarray(action, dtype=np.float32).reshape(-1, self.dof)
@@ -79,15 +102,38 @@ class PolicyRunner:
             log.warning("策略推理失败（%s），本次返回零动作", exc)
             return np.zeros((self.action_chunk, self.dof), dtype=np.float32)
 
-    def _to_batch(self, frames: dict[str, np.ndarray], instruction: str) -> dict:
+    def _camera_mapping(self) -> dict[str, str]:
+        """按 checkpoint 的 input_features 推导接口相机名到观测键的映射。
+
+        公开数据集的相机名可能是 top / wrist，也可能是 camera1 / camera2，
+        不能硬编码：优先同名匹配，剩余槽位按声明顺序分给 front。
+        """
+        features = getattr(getattr(self.policy, "config", None), "input_features", None) or {}
+        keys = [k for k in features if k.startswith("observation.images.")]
+        mapping: dict[str, str] = {}
+        for name in ("front", "wrist"):
+            same = f"observation.images.{name}"
+            if same in keys:
+                mapping[name] = same
+        rest = [k for k in keys if k not in mapping.values()]
+        for name in ("front", "wrist"):
+            if name not in mapping and rest:
+                mapping[name] = rest.pop(0)
+        return mapping or {
+            "front": "observation.images.camera1",
+            "wrist": "observation.images.camera2",
+        }
+
+    def _to_batch(self, frames: dict[str, np.ndarray], instruction: str,
+                  state: np.ndarray | None = None) -> dict:
         """把帧字典转成 lerobot 期望的 batch。
 
         lerobot 的观测键为 observation.images.<camera> 与 observation.state；
-        这里按接口相机名 front/wrist 映射到 camera1/camera2。
+        这里按接口相机名 front/wrist 映射到 checkpoint 实际使用的键。
         """
         import torch
 
-        mapping = {"front": "observation.images.camera1", "wrist": "observation.images.camera2"}
+        mapping = self._camera_mapping()
         batch: dict = {"task": [instruction]}
         for name, key in mapping.items():
             img = frames.get(name)
@@ -96,4 +142,7 @@ class PolicyRunner:
             rgb = np.asarray(img)[:, :, ::-1]           # BGR -> RGB
             tensor = torch.from_numpy(rgb.copy()).permute(2, 0, 1).float() / 255.0
             batch[key] = tensor.unsqueeze(0).to(self.device)
+        if state is not None:
+            st = torch.as_tensor(np.asarray(state, dtype=np.float32)).reshape(1, -1)
+            batch["observation.state"] = st.to(self.device)
         return batch

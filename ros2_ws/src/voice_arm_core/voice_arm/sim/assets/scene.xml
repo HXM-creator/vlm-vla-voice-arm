@@ -21,22 +21,22 @@
         <light pos="0 0 3.5" dir="0 0 -1" directional="true" />
         <geom name="floor" size="0 0 0.05" pos="0 0 0" type="plane" material="groundplane" />
         <!-- 三个待抓取方块：绿 / 蓝 / 红，放在臂前方工作区，带自由关节可被推动 -->
-        <body name="cube_green" pos="0.42 -0.07 0.0182">
+        <body name="cube_green" pos="0.39 -0.05 0.0182">
             <freejoint name="cube_green_free" />
             <geom type="box" size="0.018 0.018 0.018" rgba="0.15 0.8 0.25 1"
                 friction="1.2 0.02 0.002" />
         </body>
-        <body name="cube_blue" pos="0.42 0.0 0.0182">
+        <body name="cube_blue" pos="0.43 0.0 0.0182">
             <freejoint name="cube_blue_free" />
             <geom type="box" size="0.018 0.018 0.018" rgba="0.15 0.35 0.9 1"
                 friction="1.2 0.02 0.002" />
         </body>
-        <body name="cube_red" pos="0.42 0.07 0.0182">
+        <body name="cube_red" pos="0.40 0.05 0.0182">
             <freejoint name="cube_red_free" />
             <geom type="box" size="0.018 0.018 0.018" rgba="0.9 0.2 0.2 1"
                 friction="1.2 0.02 0.002" />
         </body>
-        <!-- 桌面视角相机：从 -y 侧斜上方俯视，框住整条臂与工作区（实测拟合） -->
-        <camera name="front_cam" pos="0.126 -0.7133 0.3618" xyaxes="1 0 0 0 0.3090 0.9511" fovy="45" />
+        <!-- 桌面视角相机：-y 侧斜上方，距离 0.9 m、俯角 26°，实测能同时框住臂与三方块 -->
+        <camera name="front_cam" pos="0.2460 -0.5258 0.4285" xyaxes="1 0 0 0 0.5299 0.8480" fovy="45" />
     </worldbody>
 </mujoco>

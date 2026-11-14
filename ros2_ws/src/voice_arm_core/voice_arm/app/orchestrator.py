@@ -64,6 +64,8 @@ class Orchestrator:
         self._threads: list[threading.Thread] = []
         self._last_exec = 0.0
         self._exec_steps_left = 0
+        # VLM 解析出的英文指令，执行线程要用它作为 VLA 的语言条件
+        self._active_instruction = ""
 
     # ---------- 对外接口 ----------
     def submit_instruction(self, text: str) -> None:
@@ -112,6 +114,10 @@ class Orchestrator:
                 self.sm.transition(State.CONFIRMING)
             else:
                 self._speak(getattr(cmd, "reply", ""))
+                # 关键：把 VLM 的结构化结果拼成 VLA 指令模板。
+                # 之前这里漏了，执行线程拿到的是空字符串，语言条件完全失效。
+                self._active_instruction = _vla_instruction(cmd)
+                log.info("vla instruction: %s", self._active_instruction)
                 self._exec_steps_left = int(self.cfg.get("policy", {}).get("action_chunk", 16))
                 self.sm.transition(State.EXECUTING)
 
@@ -156,7 +162,12 @@ class Orchestrator:
             try:
                 if self.sm.state is State.EXECUTING and self._exec_steps_left > 0:
                     frames = self.robot.get_frames()
-                    actions = self.policy.predict(frames, instruction="")
+                    # ACT 需要关节状态与语言条件，缺任一都会推理失败或输出垃圾
+                    actions = self.policy.predict(
+                        frames,
+                        instruction=self._active_instruction,
+                        state=self.robot.get_joint_positions(),
+                    )
                     self.robot.set_joint_positions(actions[0])
                     self._exec_steps_left -= 1
             except Exception as exc:  # noqa: BLE001
@@ -176,6 +187,45 @@ class Orchestrator:
                     self.tts.speak(text)
                 except Exception as exc:  # noqa: BLE001
                     log.warning("tts failed: %s", exc)
+
+
+def _encode_jpeg(image: np.ndarray | None, quality: int = 85) -> str:
+    """把一帧 BGR 图像编码成 base64 JPEG。
+
+    接口约定 ``RobotInterface.get_frames()`` 返回 BGR，cv2.imencode 正好按
+    BGR 处理，不需要额外换通道。原实现缺失此函数，导致 VLM 线程每次都在
+    NameError 上报错并被 except 吞掉，表现为“VLM 永远走 fallback”。
+    """
+    if image is None:
+        return ""
+    import base64
+
+    import cv2
+
+    ok, buf = cv2.imencode(".jpg", image, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+    if not ok:
+        raise RuntimeError("JPEG 编码失败")
+    return base64.b64encode(buf.tobytes()).decode("ascii")
+
+
+def _vla_instruction(cmd) -> str:
+    """把 VLM 结果转成进入 VLA 的固定模板。
+
+    兼容两种对象：
+    - ``voice_arm.vlm.schema.Command``（有 ``to_vla_instruction``）
+    - ``voice_arm_interfaces/msg/TaskCommand``（ROS 消息，字段扁平）
+    """
+    if hasattr(cmd, "to_vla_instruction"):
+        return cmd.to_vla_instruction()
+
+    action = str(getattr(cmd, "action", "pick") or "pick")
+    if action == "stop":
+        return "stop"
+    color = getattr(cmd, "target_color", "any") or "any"
+    shape = getattr(cmd, "target_shape", "any") or "any"
+    color_part = "" if color == "any" else f"{color} "
+    shape_part = "object" if shape == "any" else shape
+    return f"pick up the {color_part}{shape_part}"
 
 
 def _fallback_command(text: str):

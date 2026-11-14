@@ -299,6 +299,10 @@ def run(config_path: str, duration_s: float | None = None) -> None:
         action_chunk=cfg.get("policy", {}).get("action_chunk", 16),
         dof=cfg.get("robot", {}).get("dof", 6),
     )
+    # 配置了 checkpoint 却加载失败时拒绝启动：带着零动作或未归一化的策略
+    # 上真机，比直接报错危险得多。
+    if policy.load_error:
+        raise RuntimeError(f"策略加载失败，拒绝启动：{policy.load_error}")
     orch = Orchestrator(robot, policy, cfg)
     orch.start()
     try:

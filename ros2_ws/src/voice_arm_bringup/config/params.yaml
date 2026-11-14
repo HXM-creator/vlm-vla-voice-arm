@@ -14,8 +14,11 @@ vlm_node:
 
 policy_node:
   ros__parameters:
-    checkpoint: ""
-    action_chunk: 16
+    # 留空则策略始终返回零动作（机械臂不动）。填训练产物的 pretrained_model 目录：
+    #   outputs/train/<name>/checkpoints/<step>/pretrained_model
+    checkpoint: outputs/train/act_smoke_retry2/checkpoints/000500/pretrained_model
+    # 每批动作步数：社区实测 10 比默认 100 更稳（100 步 ≈ 3.3 秒开环执行）
+    action_chunk: 10
     dof: 6
 
 robot_node:
@@ -33,5 +36,5 @@ robot_node:
     camera_wrist: 1
     image_width: 640
     image_height: 480
-    # 仿真模型路径，为空时使用合成图像
-    sim_xml: ""
+    # 仿真模型路径；留空则用合成图像（空场景，不适合训练或验证抓取）
+    sim_xml: ros2_ws/src/voice_arm_core/voice_arm/sim/assets/scene.xml

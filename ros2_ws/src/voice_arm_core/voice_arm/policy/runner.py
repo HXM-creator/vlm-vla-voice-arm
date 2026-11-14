@@ -44,10 +44,17 @@ class PolicyRunner:
         self._post = None                       # checkpoint 的 postprocessor
         self._failures = 0                      # 连续推理失败次数
         self.healthy = True                     # 供上层监控；连续失败后置 False
+        self.load_error: str | None = None      # checkpoint 加载失败的说明
         self.policy = None
         self.instruction = ""
         if checkpoint:
-            self._load(checkpoint)
+            try:
+                self._load(checkpoint)
+            except PolicyError as exc:
+                # 构造阶段不抛（便于单测与降级演示），但记录错误；
+                # orchestrator 启动时据此拒绝运行，避免带着坏策略上真机
+                self.load_error = str(exc)
+                log.error("策略不可用：%s", exc)
 
     # ---------- 加载 ----------
     def _dataset_meta(self, checkpoint: str):
@@ -91,9 +98,13 @@ class PolicyRunner:
             )
             log.info("处理器已加载：pre %d 步 / post %d 步",
                      len(self._pre.steps), len(self._post.steps))
-        except Exception as exc:  # noqa: BLE001  缺文件时退回无归一化路径
+        except Exception as exc:  # noqa: BLE001
             self._pre = self._post = None
-            log.warning("归一化处理器加载失败（%s），动作数值可能不可用", exc)
+            # 没有 processor 的 ACT 输出停在归一化空间，动作必然错，
+            # 不存在“降级可用”的情况，所以这里直接报错。
+            raise PolicyError(
+                f"归一化处理器加载失败，ACT 动作数值不可用：{exc}"
+            ) from exc
 
     def _resolve_action_unit(self, checkpoint: str) -> str:
         """判断 checkpoint 训练数据的动作单位。
@@ -144,8 +155,11 @@ class PolicyRunner:
             self._output_unit = self._resolve_action_unit(checkpoint)
             self._load_processors(checkpoint)
             log.info("policy loaded from %s（动作单位 %s）", checkpoint, self._output_unit)
+        except PolicyError:
+            raise
         except Exception as exc:  # noqa: BLE001  接口变动或权重损坏
             log.warning("加载策略失败（%s），保持零动作回退", exc)
+            raise PolicyError(f"checkpoint 加载失败：{exc}") from exc
 
     # ---------- 推理 ----------
     def predict(self, frames: dict[str, np.ndarray], instruction: str,

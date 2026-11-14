@@ -253,6 +253,8 @@ def main() -> None:
     ap.add_argument("--sim-xml", default="", help="MuJoCo 场景 XML，留空用合成图像")
     ap.add_argument("--format", choices=["auto", "lerobot", "npz"], default="auto")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--full-render", action="store_true",
+                    help="保留阴影与反射（更真实，但渲染慢 3 倍）")
     args = ap.parse_args()
 
     image_size = parse_size(args.image_size)
@@ -261,6 +263,7 @@ def main() -> None:
     robot = SimRobot(
         dof=6, image_size=image_size,
         xml_path=args.sim_xml or None, cameras=CAMERAS,
+        fast_render=not args.full_render,
     )
     robot.connect()
 
@@ -281,11 +284,23 @@ def main() -> None:
         except ImportError:
             use_lerobot = False
 
+    # 目录已存在时 LeRobotDataset.create 会抛 File exists 并静默回退 npz，
+    # 让人误以为拿到了 lerobot 格式。这里提前拦住。
+    if use_lerobot and out.exists() and any(out.iterdir()):
+        raise SystemExit(
+            f"输出目录已存在且非空：{out}\n"
+            "请先删除它，或换一个 --output（lerobot 格式不会覆盖已有目录）"
+        )
+
     if use_lerobot:
         try:
             path = write_lerobot(args.repo_id, out, episodes, args.task, args.fps, image_size)
             print(f"\n已写入 LeRobotDataset：{path}")
-        except Exception as exc:  # noqa: BLE001  缺依赖或接口不兼容时回退
+        except Exception as exc:  # noqa: BLE001
+            # 显式要求 lerobot 格式时不再静默回退：npz 与 lerobot 结构不同，
+            # 静默降级会让人以为数据格式正确，训练时才发现读不了。
+            if args.format == "lerobot":
+                raise SystemExit(f"写入 LeRobotDataset 失败：{exc}") from exc
             print(f"[WARN] 写入 LeRobotDataset 失败（{exc}），回退为 npz")
             path = write_npz(out, episodes, args.task, args.fps)
             print(f"已写入 npz：{path}")

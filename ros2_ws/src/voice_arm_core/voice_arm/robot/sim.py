@@ -109,6 +109,17 @@ class SimRobot(RobotInterface):
     def set_gripper(self, value: float) -> None:
         self._gripper = float(np.clip(value, 0.0, 1.0))
 
+    # ---------- MuJoCo 句柄 ----------
+    @property
+    def model(self):
+        """MuJoCo 模型；未加载模型时为 None。"""
+        return self._mj
+
+    @property
+    def data(self):
+        """MuJoCo 数据；未加载模型时为 None。"""
+        return self._data
+
     def get_frames(self) -> dict[str, np.ndarray]:
         if self._renderer is None:
             return self._placeholder_frames()

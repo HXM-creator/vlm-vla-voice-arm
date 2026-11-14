@@ -48,23 +48,114 @@ def cosine_trajectory(q_start: np.ndarray, q_goal: np.ndarray, steps: int) -> np
     return (1 - s)[:, None] * q_start[None, :] + s[:, None] * q_goal[None, :]
 
 
-def collect_episode(robot: SimRobot, fps: int, duration_s: float,
-                    rng: np.random.Generator) -> list[dict]:
-    """跑一条 episode，返回逐帧记录。"""
-    steps = max(2, int(fps * duration_s))
-    q_start = robot.get_joint_positions()
-    # 随机目标：模拟物体位置变化带来的不同轨迹
-    q_goal = q_start + rng.uniform(-0.6, 0.6, size=q_start.shape).astype(np.float32)
-    q_goal = q_goal.astype(np.float32)
+COLOR_TO_BODY = {"green": "cube_green", "blue": "cube_blue", "red": "cube_red"}
 
-    traj = cosine_trajectory(q_start, q_goal, steps)
+# 抓取轨迹各段占比：接近 / 下降 / 闭合 / 抬起 / 保持
+SEGMENT_RATIOS = (0.33, 0.17, 0.08, 0.25, 0.17)
+GRIPPER_OPEN = 0.0
+GRIPPER_CLOSED = 1.5
+
+
+def detect_target(task: str) -> tuple[str, str] | None:
+    """从任务文本识别目标颜色，返回 (颜色, body 名)。"""
+    lower = task.lower()
+    for color, body in COLOR_TO_BODY.items():
+        if color in lower:
+            return color, body
+    return None
+
+
+def grasp_waypoints(robot: SimRobot, body_name: str) -> tuple[np.ndarray, ...]:
+    """用 IK 解出 方块上方 / 方块处 / 抬起 三个关节位姿。"""
+    import mujoco
+
+    from voice_arm.sim.kinematics import solve_ik
+
+    model, data = robot.model, robot.data
+    bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body_name)
+    if bid < 0:
+        raise RuntimeError(f"场景里没有 {body_name}")
+    mujoco.mj_forward(model, data)
+    cube = np.asarray(data.xpos[bid], dtype=np.float64).copy()
+
+    q0 = robot.get_joint_positions().astype(np.float64)
+    q_above, e1 = solve_ik(model, data, cube + np.array([0, 0, 0.08]), q0)
+    q_grasp, e2 = solve_ik(model, data, cube + np.array([0, 0, 0.02]), q_above)
+    q_lift, e3 = solve_ik(model, data, cube + np.array([0, 0, 0.14]), q_grasp)
+    print(f"    IK 误差: 上方 {e1 * 1000:.1f}mm / 抓取 {e2 * 1000:.1f}mm / 抬起 {e3 * 1000:.1f}mm")
+    return q_above, q_grasp, q_lift
+
+
+def collect_episode(robot: SimRobot, fps: int, duration_s: float,
+                    rng: np.random.Generator, task: str) -> list[dict]:
+    """跑一条 episode，返回逐帧记录。
+
+    有 MuJoCo 模型且任务里能识别颜色时，用 IK 生成真实抓取轨迹；
+    否则回退到原来的随机轨迹（保证无模型环境仍可跑通）。
+    """
+    steps = max(2, int(fps * duration_s))
+    q_start = robot.get_joint_positions().astype(np.float64)
+    target = detect_target(task)
+
+    cube_adr = None
+    cube_bid = None
+    close_end = None
+    site = None
+    model = data = None
+
+    if robot.model is not None and target is not None:
+        import mujoco
+
+        from voice_arm.sim.kinematics import site_id
+
+        model, data = robot.model, robot.data
+        cube_bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, target[1])
+        cube_adr = int(model.jnt_qposadr[model.body_jntadr[cube_bid]])
+        site = site_id(model)
+
+        q_above, q_grasp, q_lift = grasp_waypoints(robot, target[1])
+        q_start[5] = GRIPPER_OPEN
+        q_above[5] = GRIPPER_OPEN
+        q_grasp[5] = GRIPPER_OPEN
+        q_lift[5] = GRIPPER_CLOSED
+
+        segs = [max(1, int(round(r * steps))) for r in SEGMENT_RATIOS]
+        traj = np.vstack([
+            cosine_trajectory(q_start, q_above, segs[0]),
+            cosine_trajectory(q_above, q_grasp, segs[1]),
+            cosine_trajectory(q_grasp, q_grasp, segs[2]),     # 闭合：位置不动
+            cosine_trajectory(q_grasp, q_lift, segs[3]),
+            cosine_trajectory(q_lift, q_lift, segs[4]),
+        ])
+        close_at = segs[0] + segs[1]
+        traj[close_at:close_at + segs[2], 5] = np.linspace(
+            GRIPPER_OPEN, GRIPPER_CLOSED, segs[2])
+        traj[close_at + segs[2]:, 5] = GRIPPER_CLOSED
+        close_end = close_at + segs[2]
+    else:
+        q_goal = q_start + rng.uniform(-0.6, 0.6, size=q_start.shape)
+        traj = cosine_trajectory(q_start, q_goal, steps)
 
     frames: list[dict] = []
-    prev_q = q_start.copy()
-    for i in range(steps):
+    cube_delta = None
+    for i in range(min(steps, len(traj))):
         q = traj[i].astype(np.float32)
         robot.set_joint_positions(q)
-        robot.set_gripper(float(np.clip(0.5 + 0.5 * np.sin(i / steps * np.pi), 0, 1)))
+        robot.set_gripper(float(np.clip(q[5], 0, 1)))
+
+        # 运动学抓取：SimRobot 只做 mj_forward 不做 mj_step，夹爪闭合不会产生
+        # 接触力，方块不会被带走。这里在闭合时刻记录方块相对夹爪的偏移，
+        # 之后每帧把方块搬到夹爪上，使演示数据里真的“夹起来”。
+        if cube_adr is not None:
+            import mujoco
+
+            mujoco.mj_forward(model, data)
+            gripper_pos = np.asarray(data.site_xpos[site], dtype=np.float64)
+            if cube_delta is None and i >= close_end - 1:
+                cube_delta = np.asarray(data.xpos[cube_bid], dtype=np.float64) - gripper_pos
+            if cube_delta is not None:
+                data.qpos[cube_adr:cube_adr + 3] = gripper_pos + cube_delta
+                mujoco.mj_forward(model, data)
 
         images = robot.get_frames()
         # 腕部相机未就绪时用 front 占位，保证字段固定
@@ -73,13 +164,14 @@ def collect_episode(robot: SimRobot, fps: int, duration_s: float,
         if wrist is None and front is not None:
             wrist = front.copy()
 
+        # SimRobot 按接口约定输出 BGR，lerobot 数据集约定 RGB，这里统一转换。
+        # 不转会导致写入的视频通道反转：黄色机械臂变青色、蓝色地面变棕色。
         frames.append({
             "observation.state": q.copy(),
             "action": q.copy(),          # 下一步动作，最后由调用方错位一帧
-            "observation.images.front": front,
-            "observation.images.wrist": wrist,
+            "observation.images.front": front[:, :, ::-1].copy(),
+            "observation.images.wrist": wrist[:, :, ::-1].copy(),
         })
-        prev_q = q
 
     # action[t] = state[t+1]，最后一帧复制自身
     for i in range(len(frames) - 1):
@@ -161,7 +253,7 @@ def main() -> None:
 
     episodes: list[list[dict]] = []
     for i in range(args.episodes):
-        frames = collect_episode(robot, args.fps, args.duration, rng)
+        frames = collect_episode(robot, args.fps, args.duration, rng, args.task)
         episodes.append(frames)
         print(f"episode {i}: {len(frames)} frames")
 

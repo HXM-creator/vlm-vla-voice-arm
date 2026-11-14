@@ -93,6 +93,9 @@ class PolicyRunner:
             batch = self._to_batch(frames, instruction, state)
             with np.errstate(all="ignore"):
                 action = self.policy.select_action(batch)
+            # GPU 上 select_action 返回 cuda tensor，必须先搬到 host 再转 numpy
+            if hasattr(action, "detach"):
+                action = action.detach().cpu().numpy()
             arr = np.asarray(action, dtype=np.float32).reshape(-1, self.dof)
             if arr.shape[0] < self.action_chunk:
                 pad = np.repeat(arr[-1:], self.action_chunk - arr.shape[0], axis=0)

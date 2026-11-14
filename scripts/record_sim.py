@@ -193,10 +193,11 @@ def collect_episode(robot: SimRobot, fps: int, duration_s: float,
     return frames
 
 
-def write_npz(out_dir: Path, episodes: list[list[dict]], task: str, fps: int) -> Path:
+def write_npz(out_dir: Path, episodes: list[tuple[str, list[dict]]], fps: int) -> Path:
     """无 lerobot 时的回退格式：一条 episode 一个 npz。"""
     out_dir.mkdir(parents=True, exist_ok=True)
-    for idx, frames in enumerate(episodes):
+    tasks_used = sorted({t for t, _ in episodes})
+    for idx, (task, frames) in enumerate(episodes):
         path = out_dir / f"episode_{idx:04d}.npz"
         np.savez_compressed(
             path,
@@ -207,14 +208,14 @@ def write_npz(out_dir: Path, episodes: list[list[dict]], task: str, fps: int) ->
             task=np.array(task),
             fps=np.array(fps),
         )
-    meta = {"task": task, "fps": fps, "episodes": len(episodes),
+    meta = {"tasks": tasks_used, "fps": fps, "episodes": len(episodes),
             "format": "npz", "cameras": list(CAMERAS)}
     (out_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
     return out_dir
 
 
-def write_lerobot(repo_id: str, root: Path, episodes: list[list[dict]],
-                  task: str, fps: int, image_size: tuple[int, int]) -> Path:
+def write_lerobot(repo_id: str, root: Path, episodes: list[tuple[str, list[dict]]],
+                  fps: int, image_size: tuple[int, int]) -> Path:
     """写入 LeRobotDataset v3。接口与 lerobot-record 保持一致。"""
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
@@ -232,7 +233,7 @@ def write_lerobot(repo_id: str, root: Path, episodes: list[list[dict]],
         repo_id=repo_id, fps=fps, root=str(root),
         robot_type="so101_sim", features=features, use_videos=True,
     )
-    for frames in episodes:
+    for task, frames in episodes:
         for f in frames:
             dataset.add_frame({**f, "task": task})
         dataset.save_episode()
@@ -247,6 +248,8 @@ def main() -> None:
     ap.add_argument("--duration", type=float, default=6.0, help="单条 episode 秒数")
     ap.add_argument("--task", default="pick up the green cube",
                     help="训练用的英文任务模板，必须与推理时一致")
+    ap.add_argument("--tasks", default="",
+                    help="多任务，用 | 分隔；给了它则每个任务各采 --episodes 条")
     ap.add_argument("--output", default="outputs/datasets/sim_demo")
     ap.add_argument("--repo-id", default="local/sim_demo")
     ap.add_argument("--image-size", default="480,640", help="高,宽")
@@ -267,11 +270,13 @@ def main() -> None:
     )
     robot.connect()
 
-    episodes: list[list[dict]] = []
-    for i in range(args.episodes):
-        frames = collect_episode(robot, args.fps, args.duration, rng, args.task)
-        episodes.append(frames)
-        print(f"episode {i}: {len(frames)} frames")
+    tasks = [t.strip() for t in args.tasks.split("|") if t.strip()] if args.tasks else [args.task]
+    episodes: list[tuple[str, list[dict]]] = []
+    for task in tasks:
+        for i in range(args.episodes):
+            frames = collect_episode(robot, args.fps, args.duration, rng, task)
+            episodes.append((task, frames))
+            print(f"[{task}] episode {i}: {len(frames)} frames")
 
     robot.disconnect()
 
@@ -294,7 +299,7 @@ def main() -> None:
 
     if use_lerobot:
         try:
-            path = write_lerobot(args.repo_id, out, episodes, args.task, args.fps, image_size)
+            path = write_lerobot(args.repo_id, out, episodes, args.fps, image_size)
             print(f"\n已写入 LeRobotDataset：{path}")
         except Exception as exc:  # noqa: BLE001
             # 显式要求 lerobot 格式时不再静默回退：npz 与 lerobot 结构不同，
@@ -302,15 +307,15 @@ def main() -> None:
             if args.format == "lerobot":
                 raise SystemExit(f"写入 LeRobotDataset 失败：{exc}") from exc
             print(f"[WARN] 写入 LeRobotDataset 失败（{exc}），回退为 npz")
-            path = write_npz(out, episodes, args.task, args.fps)
+            path = write_npz(out, episodes, args.fps)
             print(f"已写入 npz：{path}")
     else:
-        path = write_npz(out, episodes, args.task, args.fps)
+        path = write_npz(out, episodes, args.fps)
         print(f"\n已写入 npz：{path}")
         print("提示：安装 lerobot 后可产出 LeRobotDataset v3：pip install 'lerobot>=0.4'")
 
-    total = sum(len(e) for e in episodes)
-    print(f"合计 {args.episodes} 条 / {total} 帧 / {args.fps} fps / 任务：{args.task}")
+    total = sum(len(frames) for _, frames in episodes)
+    print(f"合计 {len(episodes)} 条 / {total} 帧 / {args.fps} fps / 任务：{tasks}")
 
 
 if __name__ == "__main__":

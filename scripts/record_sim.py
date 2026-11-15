@@ -193,30 +193,31 @@ def collect_episode(robot: SimRobot, fps: int, duration_s: float,
     return frames
 
 
-def write_npz(out_dir: Path, episodes: list[tuple[str, list[dict]]], fps: int) -> Path:
-    """无 lerobot 时的回退格式：一条 episode 一个 npz。"""
-    out_dir.mkdir(parents=True, exist_ok=True)
-    tasks_used = sorted({t for t, _ in episodes})
-    for idx, (task, frames) in enumerate(episodes):
-        path = out_dir / f"episode_{idx:04d}.npz"
-        np.savez_compressed(
-            path,
-            state=np.stack([f["observation.state"] for f in frames]),
-            action=np.stack([f["action"] for f in frames]),
-            front=np.stack([f["observation.images.front"] for f in frames]),
-            wrist=np.stack([f["observation.images.wrist"] for f in frames]),
-            task=np.array(task),
-            fps=np.array(fps),
-        )
-    meta = {"tasks": tasks_used, "fps": fps, "episodes": len(episodes),
+def write_single_npz(out_dir: Path, idx: int, task: str,
+                     frames: list[dict], fps: int) -> None:
+    """写一条 npz。逐条写盘是防止内存累积的关键。"""
+    path = out_dir / f"episode_{idx:04d}.npz"
+    np.savez_compressed(
+        path,
+        state=np.stack([f["observation.state"] for f in frames]),
+        action=np.stack([f["action"] for f in frames]),
+        front=np.stack([f["observation.images.front"] for f in frames]),
+        wrist=np.stack([f["observation.images.wrist"] for f in frames]),
+        task=np.array(task),
+        fps=np.array(fps),
+    )
+
+
+def write_npz_meta(out_dir: Path, tasks: list[str], count: int, fps: int) -> None:
+    meta = {"tasks": sorted(set(tasks)), "fps": fps, "episodes": count,
             "format": "npz", "cameras": list(CAMERAS)}
-    (out_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-    return out_dir
+    (out_dir / "meta.json").write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def write_lerobot(repo_id: str, root: Path, episodes: list[tuple[str, list[dict]]],
-                  fps: int, image_size: tuple[int, int]) -> Path:
-    """写入 LeRobotDataset v3。接口与 lerobot-record 保持一致。"""
+def create_lerobot_dataset(repo_id: str, root: Path, fps: int,
+                           image_size: tuple[int, int]):
+    """创建空数据集；后续逐条 add_frame + save_episode。"""
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
     h, w = image_size
@@ -228,17 +229,16 @@ def write_lerobot(repo_id: str, root: Path, episodes: list[tuple[str, list[dict]
         "observation.images.wrist": {"dtype": "video", "shape": (h, w, 3),
                                      "names": ["height", "width", "channels"]},
     }
-
-    dataset = LeRobotDataset.create(
+    return LeRobotDataset.create(
         repo_id=repo_id, fps=fps, root=str(root),
         robot_type="so101_sim", features=features, use_videos=True,
     )
-    for task, frames in episodes:
-        for f in frames:
-            dataset.add_frame({**f, "task": task})
-        dataset.save_episode()
-    dataset.finalize()  # 不调用会写出损坏的 parquet
-    return root
+
+
+def add_lerobot_episode(dataset, task: str, frames: list[dict]) -> None:
+    for f in frames:
+        dataset.add_frame({**f, "task": task})
+    dataset.save_episode()
 
 
 def main() -> None:
@@ -271,14 +271,6 @@ def main() -> None:
     robot.connect()
 
     tasks = [t.strip() for t in args.tasks.split("|") if t.strip()] if args.tasks else [args.task]
-    episodes: list[tuple[str, list[dict]]] = []
-    for task in tasks:
-        for i in range(args.episodes):
-            frames = collect_episode(robot, args.fps, args.duration, rng, task)
-            episodes.append((task, frames))
-            print(f"[{task}] episode {i}: {len(frames)} frames")
-
-    robot.disconnect()
 
     out = Path(args.output)
     use_lerobot = args.format == "lerobot"
@@ -289,33 +281,46 @@ def main() -> None:
         except ImportError:
             use_lerobot = False
 
-    # 目录已存在时 LeRobotDataset.create 会抛 File exists 并静默回退 npz，
-    # 让人误以为拿到了 lerobot 格式。这里提前拦住。
+    # 目录已存在时 LeRobotDataset.create 会抛 File exists，提前拦住
     if use_lerobot and out.exists() and any(out.iterdir()):
         raise SystemExit(
             f"输出目录已存在且非空：{out}\n"
             "请先删除它，或换一个 --output（lerobot 格式不会覆盖已有目录）"
         )
 
+    dataset = None
     if use_lerobot:
-        try:
-            path = write_lerobot(args.repo_id, out, episodes, args.fps, image_size)
-            print(f"\n已写入 LeRobotDataset：{path}")
-        except Exception as exc:  # noqa: BLE001
-            # 显式要求 lerobot 格式时不再静默回退：npz 与 lerobot 结构不同，
-            # 静默降级会让人以为数据格式正确，训练时才发现读不了。
-            if args.format == "lerobot":
-                raise SystemExit(f"写入 LeRobotDataset 失败：{exc}") from exc
-            print(f"[WARN] 写入 LeRobotDataset 失败（{exc}），回退为 npz")
-            path = write_npz(out, episodes, args.fps)
-            print(f"已写入 npz：{path}")
+        dataset = create_lerobot_dataset(args.repo_id, out, args.fps, image_size)
     else:
-        path = write_npz(out, episodes, args.fps)
-        print(f"\n已写入 npz：{path}")
-        print("提示：安装 lerobot 后可产出 LeRobotDataset v3：pip install 'lerobot>=0.4'")
+        out.mkdir(parents=True, exist_ok=True)
 
-    total = sum(len(frames) for _, frames in episodes)
-    print(f"合计 {len(episodes)} 条 / {total} 帧 / {args.fps} fps / 任务：{tasks}")
+    total = 0
+    idx = 0
+    try:
+        for task in tasks:
+            for i in range(args.episodes):
+                frames = collect_episode(robot, args.fps, args.duration, rng, task)
+                if dataset is not None:
+                    add_lerobot_episode(dataset, task, frames)
+                else:
+                    write_single_npz(out, idx, task, frames, args.fps)
+                print(f"[{task}] episode {i}: {len(frames)} frames", flush=True)
+                total += len(frames)
+                idx += 1
+                # 关键：逐条释放，避免 150 条 x 160 MB 撑爆内存
+                del frames
+    finally:
+        robot.disconnect()
+        if dataset is not None:
+            dataset.finalize()   # 不调用会写出损坏的 parquet
+
+    if dataset is not None:
+        print(f"\n已写入 LeRobotDataset：{out}")
+    else:
+        write_npz_meta(out, tasks, idx, args.fps)
+        print(f"\n已写入 npz：{out}")
+
+    print(f"合计 {idx} 条 / {total} 帧 / {args.fps} fps / 任务：{tasks}")
 
 
 if __name__ == "__main__":

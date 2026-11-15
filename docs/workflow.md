@@ -186,7 +186,39 @@ PolicyRunner(checkpoint=..., action_unit="rad")   # auto | rad | deg
 
 ---
 
-## 5. 真机迁移 checklist（到货后照做）
+## 6. 策略能力边界（重要）
+
+`lerobot` 各策略对语言指令的支持**不一样**，选错策略会让语言条件永远无法成立。
+
+| 策略 | 是否读 `task` | 实测 |
+|:---|:---:|:---|
+| **ACT** | **❌ 0 行** | 数据集有 task 字段，但 `forward` 完全不使用 |
+| Diffusion | ❌ 0 行 | 同上 |
+| VQ-BeT | ❌ 0 行 | 同上 |
+| **SmolVLA** | ✅ 6 行 | 有 tokenizer + 语言编码 |
+| **π0** | ✅ 6 行 | 同上 |
+
+**排查方法**：
+
+```bash
+grep -c -E 'batch\["task"\]|batch\.get\("task"\)|tokenizer' \
+  ~/.local/lib/python3.10/site-packages/lerobot/policies/<name>/*.py
+```
+
+**我们踩过的坑**：用 ACT 训 150 条三色数据、15000 步，动作学会了
+（`action_std=1.25`），但三种指令的动作距离只有 **0.00016**——语言完全无效。
+不是数据问题，是 ACT 架构不支持。
+
+**推论**：做语言条件任务必须用 SmolVLA 或 π0。ACT 只能做**单任务**
+（指令固定，模型只学"看图做动作"）。
+
+**另一个更正**：用公开数据集（geonmin-kim）测出的 `effective`（0.0135）
+是假象——该数据集里颜色与位置绑定，加上 ACT 的 VAE 采样随机性，
+并非模型理解语言。
+
+---
+
+## 7. 真机迁移 checklist（到货后照做）
 
 | # | 步骤 | 验证方式 |
 |:--|:---|:---|
